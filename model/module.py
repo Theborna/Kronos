@@ -313,7 +313,7 @@ class RotaryPositionalEmbedding(nn.Module):
 
 
 class MultiHeadAttentionWithRoPE(nn.Module):
-    def __init__(self, d_model, n_heads, attn_dropout_p=0.0, resid_dropout_p=0.0):
+    def __init__(self, d_model, n_heads, attn_dropout_p=0.0, resid_dropout_p=0.0, is_causal=True):
         super().__init__()
         self.d_model = d_model
         self.n_heads = n_heads
@@ -326,6 +326,7 @@ class MultiHeadAttentionWithRoPE(nn.Module):
         self.rotary = RotaryPositionalEmbedding(self.head_dim)
         self.attn_dropout_p = attn_dropout_p
         self.resid_dropout = nn.Dropout(resid_dropout_p)
+        self.is_causal = is_causal
 
     def forward(self, x, key_padding_mask=None):
         batch_size, seq_len, _ = x.shape
@@ -346,7 +347,7 @@ class MultiHeadAttentionWithRoPE(nn.Module):
             q, k, v,
             attn_mask=attn_mask,
             dropout_p=self.attn_dropout_p if self.training else 0.0,
-            is_causal=True
+            is_causal=self.is_causal
         )
 
         attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
@@ -463,10 +464,10 @@ class DependencyAwareLayer(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, d_model, n_heads, ff_dim=1024, ffn_dropout_p=0.0, attn_dropout_p=0.0, resid_dropout_p=0.0):
+    def __init__(self, d_model, n_heads, ff_dim=1024, ffn_dropout_p=0.0, attn_dropout_p=0.0, resid_dropout_p=0.0, is_causal=True):
         super().__init__()
         self.norm1 = RMSNorm(d_model)
-        self.self_attn = MultiHeadAttentionWithRoPE(d_model, n_heads, attn_dropout_p, resid_dropout_p)
+        self.self_attn = MultiHeadAttentionWithRoPE(d_model, n_heads, attn_dropout_p, resid_dropout_p, is_causal=is_causal)
         self.norm2 = RMSNorm(d_model)
         self.ffn = FeedForward(d_model, ff_dim, ffn_dropout_p)
 
@@ -560,6 +561,7 @@ class TemporalEmbedding(nn.Module):
         month_x = self.month_embed(x[:, :, 4])
 
         return hour_x + weekday_x + day_x + month_x + minute_x
+
 
 
 

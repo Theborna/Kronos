@@ -284,6 +284,7 @@ class FeedForward(nn.Module):
 class RotaryPositionalEmbedding(nn.Module):
     def __init__(self, dim):
         super().__init__()
+        assert dim % 2 == 0, "head_dim must be even for RoPE."
         inv_freq = 1.0 / (10000 ** (torch.arange(0, dim, 2).float() / dim))
         self.register_buffer("inv_freq", inv_freq)
         self.seq_len_cached = None
@@ -315,9 +316,11 @@ class RotaryPositionalEmbedding(nn.Module):
 class MultiHeadAttentionWithRoPE(nn.Module):
     def __init__(self, d_model, n_heads, attn_dropout_p=0.0, resid_dropout_p=0.0, is_causal=True):
         super().__init__()
+        assert d_model % n_heads == 0, "d_model must be divisible by n_heads."
         self.d_model = d_model
         self.n_heads = n_heads
         self.head_dim = d_model // n_heads
+        assert self.head_dim % 2 == 0, "head_dim must be even for RoPE."
 
         self.q_proj = nn.Linear(d_model, d_model)
         self.k_proj = nn.Linear(d_model, d_model)
@@ -561,6 +564,7 @@ class TemporalEmbedding(nn.Module):
         month_x = self.month_embed(x[:, :, 4])
 
         return hour_x + weekday_x + day_x + month_x + minute_x
+
 
 
 

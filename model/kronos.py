@@ -236,6 +236,19 @@ class Kronos(nn.Module, PyTorchModelHubMixin):
         elif isinstance(module, RMSNorm):
             nn.init.ones_(module.weight)
 
+    def decoder(self, s1_ids, s2_ids, stamp=None, padding_mask=None):
+        x = self.embedding([s1_ids, s2_ids])
+        if stamp is not None:
+            time_embedding = self.time_emb(stamp)
+            x = x + time_embedding
+        x = self.token_drop(x)
+
+        for layer in self.transformer:
+            x = layer(x, key_padding_mask=padding_mask)
+
+        x = self.norm(x)
+        return x
+
     def forward(self, s1_ids, s2_ids, stamp=None, padding_mask=None, use_teacher_forcing=False, s1_targets=None):
         """
         Args:
@@ -649,4 +662,5 @@ class KronosPredictor:
             pred_dfs.append(pred_df)
 
         return pred_dfs
+
 

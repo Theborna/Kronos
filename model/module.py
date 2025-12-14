@@ -356,7 +356,6 @@ class MultiHeadAttentionWithRoPE(nn.Module):
         attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
         return self.resid_dropout(self.out_proj(attn_output))
 
-
 class MultiHeadCrossAttentionWithRoPE(nn.Module):
     def __init__(self, d_model, n_heads, attn_dropout_p=0.0, resid_dropout=0.0):
         super().__init__()
@@ -376,19 +375,29 @@ class MultiHeadCrossAttentionWithRoPE(nn.Module):
         batch_size, q_len, _ = query.shape
         _, seq_len, _ = key.shape
 
+        # [B, H, L, D_head]
         q = self.q_proj(query).view(batch_size, q_len, self.n_heads, self.head_dim).transpose(1, 2)
         k = self.k_proj(key).view(batch_size, seq_len, self.n_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(value).view(batch_size, seq_len, self.n_heads, self.head_dim).transpose(1, 2)
 
         q, k = self.rotary(q, k)
 
+        # FIX: Handle your custom 3D Alignment Masks [B, Lq, Lk]
+        attn_mask = None
         if key_padding_mask is not None:
-            attn_mask = key_padding_mask.unsqueeze(1).unsqueeze(2)
-            attn_mask = attn_mask.expand(-1, self.n_heads, q_len, -1)
-        else:
-            attn_mask = None
+            if key_padding_mask.dim() == 3:
+                # Case: Complex Mask [B, Lq, Lk] -> Broadcast over heads [B, 1, Lq, Lk]
+                attn_mask = key_padding_mask.unsqueeze(1)
+            elif key_padding_mask.dim() == 2:
+                # Case: Simple Padding Mask [B, Lk] -> [B, 1, 1, Lk] -> [B, 1, Lq, Lk]
+                attn_mask = key_padding_mask.unsqueeze(1).unsqueeze(2)
+                attn_mask = attn_mask.expand(-1, self.n_heads, q_len, -1)
+            else:
+                # Case: Already 4D [B, H, Lq, Lk]
+                attn_mask = key_padding_mask
 
-        is_causal_flag = self.training
+        # FIX: Must be False for Cross-Attention
+        is_causal_flag = False 
 
         attn_output = F.scaled_dot_product_attention(
             q, k, v,
@@ -399,7 +408,6 @@ class MultiHeadCrossAttentionWithRoPE(nn.Module):
 
         attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, q_len, self.d_model)
         return self.resid_dropout(self.out_proj(attn_output))
-
 
 class HierarchicalEmbedding(nn.Module):
     def __init__(self, s1_bits, s2_bits, d_model=256):
@@ -564,6 +572,7 @@ class TemporalEmbedding(nn.Module):
         month_x = self.month_embed(x[:, :, 4])
 
         return hour_x + weekday_x + day_x + month_x + minute_x
+
 
 
 

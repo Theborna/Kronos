@@ -292,20 +292,40 @@ class RotaryPositionalEmbedding(nn.Module):
         self.sin_cached = None
 
     def _update_cos_sin_cache(self, x, seq_len):
-        if seq_len != self.seq_len_cached:
+        # Only regenerate if the requested length is larger than what we have cached
+        if self.seq_len_cached is None or seq_len > self.seq_len_cached:
             self.seq_len_cached = seq_len
             t = torch.arange(seq_len, device=x.device).type_as(self.inv_freq)
             freqs = torch.einsum('i,j->ij', t, self.inv_freq)
             emb = torch.cat((freqs, freqs), dim=-1).to(x.device)
+            # [1, 1, seq_len, dim]
             self.cos_cached = emb.cos()[None, None, :, :]
             self.sin_cached = emb.sin()[None, None, :, :]
         return self.cos_cached, self.sin_cached
 
-    def forward(self, q, k):
-        cos, sin = self._update_cos_sin_cache(q, q.shape[-2])
+    def forward(self, q, k, q_offset: int = 0):
+        # Q shape: [B, H, q_len, D]
+        # K shape: [B, H, k_len, D]
+        q_len = q.shape[-2]
+        k_len = k.shape[-2]
+
+        # Ensure cache is large enough for the furthest time step needed
+        # We need up to max(k_len, q_offset + q_len)
+        req_len = max(k_len, q_offset + q_len)
+        cos, sin = self._update_cos_sin_cache(q, req_len)
+
+        # Slice K (starts at 0)
+        cos_k = cos[..., :k_len, :]
+        sin_k = sin[..., :k_len, :]
+
+        # Slice Q (starts at q_offset)
+        # Q[0] gets rotated by index 'q_offset', Q[1] by 'q_offset+1', etc.
+        cos_q = cos[..., q_offset : q_offset + q_len, :]
+        sin_q = sin[..., q_offset : q_offset + q_len, :]
+
         return (
-            (q * cos) + (self._rotate_half(q) * sin),
-            (k * cos) + (self._rotate_half(k) * sin),
+            (q * cos_q) + (self._rotate_half(q) * sin_q),
+            (k * cos_k) + (self._rotate_half(k) * sin_k),
         )
 
     def _rotate_half(self, x):
@@ -371,7 +391,7 @@ class MultiHeadCrossAttentionWithRoPE(nn.Module):
         self.attn_dropout_p = attn_dropout_p
         self.resid_dropout = nn.Dropout(resid_dropout)
 
-    def forward(self, query, key, value, key_padding_mask=None):
+    def forward(self, query, key, value, q_offset=0, key_padding_mask=None):
         batch_size, q_len, _ = query.shape
         _, seq_len, _ = key.shape
 
@@ -380,7 +400,7 @@ class MultiHeadCrossAttentionWithRoPE(nn.Module):
         k = self.k_proj(key).view(batch_size, seq_len, self.n_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(value).view(batch_size, seq_len, self.n_heads, self.head_dim).transpose(1, 2)
 
-        q, k = self.rotary(q, k)
+        q, k = self.rotary(q, k, q_offset=q_offset)
 
         # FIX: Handle your custom 3D Alignment Masks [B, Lq, Lk]
         attn_mask = None
@@ -572,14 +592,3 @@ class TemporalEmbedding(nn.Module):
         month_x = self.month_embed(x[:, :, 4])
 
         return hour_x + weekday_x + day_x + month_x + minute_x
-
-
-
-
-
-
-
-
-
-
-

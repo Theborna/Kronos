@@ -383,7 +383,7 @@ class MultiHeadCrossAttentionWithRoPE(nn.Module):
         self.attn_dropout_p = attn_dropout_p
         self.resid_dropout = nn.Dropout(resid_dropout)
 
-    def forward(self, query, key, value, q_offset=0, key_padding_mask=None):
+    def forward(self, query, key, value, q_offset=0, k_offset=0, key_padding_mask=None):
         batch_size, q_len, _ = query.shape
         _, seq_len, _ = key.shape
 
@@ -392,7 +392,7 @@ class MultiHeadCrossAttentionWithRoPE(nn.Module):
         k = self.k_proj(key).view(batch_size, seq_len, self.n_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(value).view(batch_size, seq_len, self.n_heads, self.head_dim).transpose(1, 2)
 
-        q, k = self.rotary(q, k, q_offset=q_offset)
+        q, k = self.rotary(q, k, q_offset=q_offset, k_offset=k_offset)
 
         # FIX: Handle your custom 3D Alignment Masks [B, Lq, Lk]
         attn_mask = None
@@ -584,4 +584,5 @@ class TemporalEmbedding(nn.Module):
         month_x = self.month_embed(x[:, :, 4])
 
         return hour_x + weekday_x + day_x + month_x + minute_x
+
 

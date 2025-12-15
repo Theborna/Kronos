@@ -284,50 +284,42 @@ class FeedForward(nn.Module):
 class RotaryPositionalEmbedding(nn.Module):
     def __init__(self, dim):
         super().__init__()
-        assert dim % 2 == 0, "head_dim must be even for RoPE."
         inv_freq = 1.0 / (10000 ** (torch.arange(0, dim, 2).float() / dim))
         self.register_buffer("inv_freq", inv_freq)
         self.seq_len_cached = None
         self.cos_cached = None
         self.sin_cached = None
 
-    def _update_cos_sin_cache(self, x, seq_len):
-        # Only regenerate if the requested length is larger than what we have cached
+    def _update_cache(self, x, seq_len):
         if self.seq_len_cached is None or seq_len > self.seq_len_cached:
             self.seq_len_cached = seq_len
             t = torch.arange(seq_len, device=x.device).type_as(self.inv_freq)
             freqs = torch.einsum('i,j->ij', t, self.inv_freq)
             emb = torch.cat((freqs, freqs), dim=-1).to(x.device)
-            # [1, 1, seq_len, dim]
             self.cos_cached = emb.cos()[None, None, :, :]
             self.sin_cached = emb.sin()[None, None, :, :]
         return self.cos_cached, self.sin_cached
 
-    def forward(self, q, k, q_offset: int = 0):
-        # Q shape: [B, H, q_len, D]
-        # K shape: [B, H, k_len, D]
+    def forward(self, q, k, q_offset: int = 0, k_offset: int = 0):
+        # We need cache up to the furthest point reached by either Q or K
+        req_len = max(q.shape[-2] + q_offset, k.shape[-2] + k_offset)
+        cos, sin = self._update_cache(q, req_len)
+        
+        # Slice Q (Offset .. Offset + Len)
         q_len = q.shape[-2]
-        k_len = k.shape[-2]
-
-        # Ensure cache is large enough for the furthest time step needed
-        # We need up to max(k_len, q_offset + q_len)
-        req_len = max(k_len, q_offset + q_len)
-        cos, sin = self._update_cos_sin_cache(q, req_len)
-
-        # Slice K (starts at 0)
-        cos_k = cos[..., :k_len, :]
-        sin_k = sin[..., :k_len, :]
-
-        # Slice Q (starts at q_offset)
-        # Q[0] gets rotated by index 'q_offset', Q[1] by 'q_offset+1', etc.
         cos_q = cos[..., q_offset : q_offset + q_len, :]
         sin_q = sin[..., q_offset : q_offset + q_len, :]
 
+        # Slice K (Offset .. Offset + Len)
+        k_len = k.shape[-2]
+        cos_k = cos[..., k_offset : k_offset + k_len, :]
+        sin_k = sin[..., k_offset : k_offset + k_len, :]
+
         return (
             (q * cos_q) + (self._rotate_half(q) * sin_q),
-            (k * cos_k) + (self._rotate_half(k) * sin_k),
+            (k * cos_k) + (self._rotate_half(k) * sin_k)
         )
-
+        
     def _rotate_half(self, x):
         x1, x2 = x.chunk(2, dim=-1)
         return torch.cat((-x2, x1), dim=-1)
@@ -592,3 +584,4 @@ class TemporalEmbedding(nn.Module):
         month_x = self.month_embed(x[:, :, 4])
 
         return hour_x + weekday_x + day_x + month_x + minute_x
+
